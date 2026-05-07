@@ -12,17 +12,19 @@ import (
 )
 
 var (
-	version = "dev"
-	commit  = "none"
-	date    = "unknown"
+	version  = "dev"
+	commit   = "none"
+	date     = "unknown"
+	exitFunc = os.Exit
 )
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	exitFunc(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
 func run(args []string, out io.Writer, errOut io.Writer) int {
 	command := cli.New()
+	exitCode := -1
 	parser, err := kong.New(
 		command,
 		kong.Name("slack-cli"),
@@ -34,6 +36,9 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			"commit":  commit,
 			"date":    date,
 		}),
+		kong.Exit(func(code int) {
+			exitCode = code
+		}),
 	)
 	if err != nil {
 		_, _ = fmt.Fprintln(errOut, err)
@@ -41,6 +46,9 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	}
 
 	kctx, err := parser.Parse(args)
+	if exitCode >= 0 {
+		return exitCode
+	}
 	if err != nil {
 		_, _ = fmt.Fprintln(errOut, err)
 		return 2

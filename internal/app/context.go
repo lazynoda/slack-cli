@@ -86,6 +86,18 @@ func (c *Context) Cookie() (string, string) {
 	return "", ""
 }
 
+func (c *Context) BaseURL() (string, string) {
+	if baseURL := strings.TrimSpace(os.Getenv("SLACK_CLI_BASE_URL")); baseURL != "" {
+		return baseURL, "SLACK_CLI_BASE_URL"
+	}
+
+	if baseURL := strings.TrimSpace(os.Getenv("SLACK_BASE_URL")); baseURL != "" {
+		return baseURL, "SLACK_BASE_URL"
+	}
+
+	return "", ""
+}
+
 func (c *Context) RequireToken() (string, string, error) {
 	token, source := c.Token()
 	if token == "" {
@@ -107,6 +119,7 @@ func (c *Context) SlackClient() (*slackapi.Client, error) {
 	c.slack = slackapi.NewClient(slackapi.Options{
 		Token:   token,
 		Cookie:  firstValue(c.Cookie()),
+		BaseURL: firstValue(c.BaseURL()),
 		Timeout: c.Settings.Timeout,
 	})
 	return c.slack, nil
@@ -124,12 +137,13 @@ func (c *Context) RequestContext() (context.Context, context.CancelFunc) {
 }
 
 func (c *Context) ResolveUser(ref string) (string, error) {
+	raw := strings.TrimSpace(ref)
 	trimmed := normalizeRef(ref)
 	if trimmed == "" {
 		return "", errors.New("user reference cannot be empty")
 	}
-	if slackIDPattern.MatchString(trimmed) && strings.HasPrefix(trimmed, "U") {
-		return trimmed, nil
+	if slackIDPattern.MatchString(raw) && strings.HasPrefix(raw, "U") {
+		return raw, nil
 	}
 	if cached := c.resolvedUsers[trimmed]; cached != "" {
 		return cached, nil
@@ -173,12 +187,13 @@ func (c *Context) ResolveUser(ref string) (string, error) {
 }
 
 func (c *Context) ResolveConversation(ref string) (string, error) {
+	raw := strings.TrimSpace(ref)
 	trimmed := normalizeRef(ref)
 	if trimmed == "" {
 		return "", errors.New("conversation reference cannot be empty")
 	}
-	if slackIDPattern.MatchString(trimmed) && isConversationID(trimmed) {
-		return trimmed, nil
+	if slackIDPattern.MatchString(raw) && isConversationID(raw) {
+		return raw, nil
 	}
 	if cached := c.resolvedChannels[trimmed]; cached != "" {
 		return cached, nil
