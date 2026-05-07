@@ -1083,7 +1083,7 @@ func (c *ConversationsUnreadCmd) Run(appCtx *app.Context) error {
 		return err
 	}
 	if strings.TrimSpace(info.Channel.LastRead) == "" {
-		return errors.New("Slack did not return last_read for this conversation/token, so unread messages cannot be derived")
+		return errors.New("slack did not return last_read for this conversation/token, so unread messages cannot be derived")
 	}
 
 	messages, err := collectHistory(ctx, client, channelID, c.Limit, "", c.All, info.Channel.LastRead, "", false)
@@ -1385,7 +1385,7 @@ func printUser(appCtx *app.Context, user slackapi.User) error {
 		return appCtx.Output.JSON(user)
 	}
 
-	lines := []string{}
+	var lines []string
 	if appCtx.Output.Mode() == output.Plain {
 		lines = []string{
 			"id=" + user.ID,
@@ -1416,7 +1416,7 @@ func printConversation(appCtx *app.Context, conversation slackapi.Conversation) 
 		return appCtx.Output.JSON(conversation)
 	}
 
-	lines := []string{}
+	var lines []string
 	if appCtx.Output.Mode() == output.Plain {
 		lines = []string{
 			"id=" + conversation.ID,

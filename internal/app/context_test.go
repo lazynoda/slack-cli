@@ -36,7 +36,7 @@ func newSlackServer(t *testing.T) *httptest.Server {
 			_, _ = w.Write([]byte(`{"ok":true,"team":"Team"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(fmt.Sprintf(`{"ok":false,"error":"unknown_path:%s"}`, r.URL.Path)))
+			_, _ = fmt.Fprintf(w, `{"ok":false,"error":"unknown_path:%s"}`, r.URL.Path)
 		}
 	}))
 }
