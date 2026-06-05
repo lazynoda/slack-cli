@@ -176,7 +176,10 @@ func TestClientMethodWrappers(t *testing.T) {
 		func() error { _, err := client.ChatDelete(ctx, "C1", "1.2"); return err },
 		func() error { _, err := client.ChatGetPermalink(ctx, "C1", "1.2"); return err },
 		func() error { _, err := client.SearchMessages(ctx, "q", 20, 1, "score", "desc", "", false); return err },
-		func() error { _, err := client.SearchMessages(ctx, "q", 20, 2, "timestamp", "asc", "cursor", true); return err },
+		func() error {
+			_, err := client.SearchMessages(ctx, "q", 20, 2, "timestamp", "asc", "cursor", true)
+			return err
+		},
 	}
 
 	for i, check := range checks {

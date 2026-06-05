@@ -42,14 +42,9 @@ Move the compiled binary to your system path (e.g., `/usr/local/bin`) to run it 
 
 `slack-cli` provides three main ways to authenticate:
 
-#### Option A: Token Authentication (Recommended for Bots)
-Set a Slack API token (`xoxb-...` or `xoxp-...`) for the default profile:
-```bash
-./slack-cli auth set-token xoxb-your-bot-token
-```
+#### Option A: Automatic Browser Import (Recommended for Users)
+Import your active session cookie (`d`) and client token (`xoxc-...`) directly from your local browser (Chrome, Brave, Arc, Firefox, Safari, Edge, etc.). This is the recommended method for personal/interactive usage because it does not require creating a custom Slack App:
 
-#### Option B: Automatic Browser Import (Best for User accounts)
-Import your active session cookie (`d`) and client token (`xoxc-...`) directly from your local browser (Chrome, Brave, Arc, Firefox, Safari, Edge, etc.):
 ```bash
 # Import from Google Chrome's default profile
 ./slack-cli auth import-cookie --browser chrome
@@ -61,6 +56,12 @@ Import your active session cookie (`d`) and client token (`xoxc-...`) directly f
 ./slack-cli auth import-cookie --browser arc
 ```
 *Note: Under the hood, this command reads the browser's cookies and decrypts/parses your client configurations from Chrome's LevelDB Local Storage (`localConfig_v2` key).*
+
+#### Option B: Token Authentication (Best for Bots / API Integrations)
+Set a Slack API token (`xoxb-...` or `xoxp-...`) for the default profile:
+```bash
+./slack-cli auth set-token xoxb-your-bot-token
+```
 
 #### Option C: Environment Variables (Best for CI/CD)
 Override any stored configurations dynamically using env variables:
@@ -90,16 +91,16 @@ Check which credentials are currently active:
 
 # Resolve display name or email to a Slack ID
 ./slack-cli resolve user @alice
-./slack-cli resolve conversation #general
+./slack-cli resolve conversation '#general'
 
 # Get unread message counts for a channel
-./slack-cli conversations unread #general
+./slack-cli conversations unread '#general'
 ```
 
 ### Messaging
 ```bash
 # Send a message to a public channel
-./slack-cli chat send #general "Deployment successful! 🚀"
+./slack-cli chat send '#general' "Deployment successful! 🚀"
 
 # Open a DM and send a direct message
 ./slack-cli chat dm @alice "Hey Alice, let's catch up!"
@@ -108,10 +109,10 @@ Check which credentials are currently active:
 ./slack-cli chat dm @alice @bob "Meeting starts in 5 minutes."
 
 # Reply in a threaded conversation
-./slack-cli chat send #general "Thread reply" --thread-ts 1746592769.123456
+./slack-cli chat send '#general' "Thread reply" --thread-ts 1746592769.123456
 
 # Delete a message
-./slack-cli chat delete #general 1746592769.123456
+./slack-cli chat delete '#general' 1746592769.123456
 ```
 
 ### Searching

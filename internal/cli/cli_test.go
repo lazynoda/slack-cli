@@ -636,7 +636,9 @@ func TestAuthImportCookieCmd(t *testing.T) {
 			if err := db.Put([]byte("_https://app.slack.com\x00\x01localConfig_v2"), val, nil); err != nil {
 				t.Fatalf("db.Put() error = %v", err)
 			}
-			db.Close()
+			if err := db.Close(); err != nil {
+				t.Fatalf("db.Close() error = %v", err)
+			}
 		}
 
 		appCtx := newTestAppContextNoToken(t, output.Human)
@@ -698,7 +700,9 @@ func TestAuthImportCookieCmd(t *testing.T) {
 			if err := db.Put([]byte("_https://app.slack.com\x00\x01localConfig_v2"), val, nil); err != nil {
 				t.Fatalf("db.Put() error = %v", err)
 			}
-			db.Close()
+			if err := db.Close(); err != nil {
+				t.Fatalf("db.Close() error = %v", err)
+			}
 		}
 
 		appCtx := newTestAppContextNoToken(t, output.Human)

@@ -688,7 +688,9 @@ func extractChromeToken(profilePath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		_ = os.RemoveAll(tmpDir)
+	}()
 
 	files, err := os.ReadDir(leveldbPath)
 	if err != nil {
@@ -714,7 +716,9 @@ func extractChromeToken(profilePath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer db.Close()
+	defer func() {
+		_ = db.Close()
+	}()
 
 	iter := db.NewIterator(nil, nil)
 	defer iter.Release()
