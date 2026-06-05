@@ -127,15 +127,29 @@ type ConversationValue struct {
 	Value string `json:"value"`
 }
 
+type MessageReaction struct {
+	Name  string   `json:"name"`
+	Count int      `json:"count"`
+	Users []string `json:"users,omitempty"`
+}
+
 type Message struct {
-	Type       string `json:"type,omitempty"`
-	Subtype    string `json:"subtype,omitempty"`
-	User       string `json:"user,omitempty"`
-	BotID      string `json:"bot_id,omitempty"`
-	Text       string `json:"text,omitempty"`
-	Ts         string `json:"ts,omitempty"`
-	ThreadTS   string `json:"thread_ts,omitempty"`
-	ReplyCount int    `json:"reply_count,omitempty"`
+	Type       string            `json:"type,omitempty"`
+	Subtype    string            `json:"subtype,omitempty"`
+	User       string            `json:"user,omitempty"`
+	BotID      string            `json:"bot_id,omitempty"`
+	Text       string            `json:"text,omitempty"`
+	Ts         string            `json:"ts,omitempty"`
+	ThreadTS   string            `json:"thread_ts,omitempty"`
+	ReplyCount int               `json:"reply_count,omitempty"`
+	Reactions  []MessageReaction `json:"reactions,omitempty"`
+}
+
+type ReactionsGetResponse struct {
+	apiEnvelope
+	Type    string  `json:"type,omitempty"`
+	Channel string  `json:"channel,omitempty"`
+	Message Message `json:"message,omitempty"`
 }
 
 type Conversation struct {
@@ -649,6 +663,37 @@ func (c *Client) SearchMessages(ctx context.Context, query string, count int, pa
 
 	var response SearchMessagesResponse
 	if err := c.CallWithHTTPMethod(ctx, "search.messages", http.MethodGet, params, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+func (c *Client) ReactionsAdd(ctx context.Context, channel string, timestamp string, emoji string) error {
+	params := url.Values{}
+	params.Set("channel", channel)
+	params.Set("timestamp", timestamp)
+	params.Set("name", emoji)
+
+	return c.Call(ctx, "reactions.add", params, &apiEnvelope{})
+}
+
+func (c *Client) ReactionsRemove(ctx context.Context, channel string, timestamp string, emoji string) error {
+	params := url.Values{}
+	params.Set("channel", channel)
+	params.Set("timestamp", timestamp)
+	params.Set("name", emoji)
+
+	return c.Call(ctx, "reactions.remove", params, &apiEnvelope{})
+}
+
+func (c *Client) ReactionsGet(ctx context.Context, channel string, timestamp string, full bool) (*ReactionsGetResponse, error) {
+	params := url.Values{}
+	params.Set("channel", channel)
+	params.Set("timestamp", timestamp)
+	setBool(params, "full", full)
+
+	var response ReactionsGetResponse
+	if err := c.CallWithHTTPMethod(ctx, "reactions.get", http.MethodGet, params, &response); err != nil {
 		return nil, err
 	}
 	return &response, nil

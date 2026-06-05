@@ -30,6 +30,7 @@ type CLI struct {
 	Conversations ConversationsCmd `cmd:"" help:"Conversation commands built on conversations.* methods."`
 	Chat          ChatCmd          `cmd:"" help:"Message commands built on chat.* methods."`
 	Search        SearchCmd        `cmd:"" help:"Search commands."`
+	Reactions     ReactionsCmd     `cmd:"" help:"Reaction commands."`
 }
 
 type Globals struct {
@@ -110,6 +111,7 @@ type ConversationsCmd struct {
 	Unarchive ConversationsUnarchiveCmd `cmd:"" help:"Unarchive a conversation."`
 	Mark      ConversationsMarkCmd      `cmd:"" help:"Set the read cursor for a conversation."`
 	Unread    ConversationsUnreadCmd    `cmd:"" help:"Show messages newer than the conversation's last_read cursor when available."`
+	Inbox     ConversationsInboxCmd     `cmd:"" help:"Show an inbox summary of all unread conversations."`
 }
 
 type ConversationsListCmd struct {
@@ -204,6 +206,11 @@ type ConversationsUnreadCmd struct {
 	All     bool   `help:"Follow response_metadata.next_cursor until exhausted."`
 }
 
+type ConversationsInboxCmd struct {
+	Limit int  `default:"100" help:"Maximum conversations to inspect."`
+	All   bool `help:"Follow response_metadata.next_cursor until exhausted."`
+}
+
 type ChatCmd struct {
 	Send      ChatSendCmd      `cmd:"" help:"Send a message with chat.postMessage."`
 	DM        ChatDMCmd        `cmd:"" help:"Open a DM or MPDM and send a message."`
@@ -258,6 +265,30 @@ type SearchMessagesCmd struct {
 	Sort      string `default:"score" enum:"score,timestamp" help:"Sort order."`
 	SortDir   string `name:"sort-dir" default:"desc" enum:"asc,desc" help:"Sort direction."`
 	Highlight bool   `help:"Enable Slack highlight markers."`
+}
+
+type ReactionsCmd struct {
+	Add    ReactionsAddCmd    `cmd:"" help:"Add a reaction to a message."`
+	Remove ReactionsRemoveCmd `cmd:"" help:"Remove a reaction from a message."`
+	List   ReactionsListCmd   `cmd:"" help:"List reactions on a message."`
+}
+
+type ReactionsAddCmd struct {
+	Channel string `arg:"" help:"Conversation reference: ID, #name, or name."`
+	TS      string `arg:"" help:"Message timestamp."`
+	Emoji   string `arg:"" help:"Emoji name, e.g. thumbsup."`
+}
+
+type ReactionsRemoveCmd struct {
+	Channel string `arg:"" help:"Conversation reference: ID, #name, or name."`
+	TS      string `arg:"" help:"Message timestamp."`
+	Emoji   string `arg:"" help:"Emoji name, e.g. thumbsup."`
+}
+
+type ReactionsListCmd struct {
+	Channel string `arg:"" help:"Conversation reference: ID, #name, or name."`
+	TS      string `arg:"" help:"Message timestamp."`
+	Full    bool   `help:"Return details about which users reacted."`
 }
 
 func New() *CLI {
@@ -1670,6 +1701,197 @@ func (c *SearchMessagesCmd) Run(appCtx *app.Context) error {
 		"Total: " + strconv.Itoa(response.Messages.Total),
 	})
 	return appCtx.Output.Table([]string{"Channel", "User", "TS", "Text", "Permalink"}, searchRows(response.Messages.Matches))
+}
+
+func (c *ConversationsInboxCmd) Run(appCtx *app.Context) error {
+	if c.Limit <= 0 {
+		return errors.New("--limit must be greater than zero")
+	}
+
+	client, err := appCtx.SlackClient()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := appCtx.RequestContext()
+	defer cancel()
+
+	types := "public_channel,private_channel,im,mpim"
+	channels, err := collectConversations(ctx, client, c.Limit, "", c.All, types, true)
+	if err != nil {
+		return err
+	}
+
+	var unreadConversations []slackapi.Conversation
+	for _, ch := range channels {
+		isUnread := ch.UnreadCount > 0 || ch.UnreadCountDisplay > 0
+		if !isUnread && ch.LastRead != "" && ch.Latest != nil {
+			if ch.Latest.Ts > ch.LastRead {
+				isUnread = true
+			}
+		}
+		if isUnread {
+			unreadConversations = append(unreadConversations, ch)
+		}
+	}
+
+	if appCtx.Output.Mode() == output.JSON {
+		return appCtx.Output.JSON(unreadConversations)
+	}
+
+	rows := make([][]string, 0, len(unreadConversations))
+	for _, ch := range unreadConversations {
+		name := firstNonEmpty(ch.Name, ch.NameNormalized, ch.User, ch.ID)
+		unreadStr := strconv.Itoa(ch.UnreadCountDisplay)
+		if ch.UnreadCountDisplay == 0 && ch.UnreadCount > 0 {
+			unreadStr = strconv.Itoa(ch.UnreadCount)
+		}
+		if unreadStr == "0" {
+			unreadStr = "yes"
+		}
+
+		latestText := ""
+		if ch.Latest != nil {
+			latestText = truncate(strings.ReplaceAll(ch.Latest.Text, "\n", " "), 50)
+		}
+
+		rows = append(rows, []string{
+			ch.ID,
+			name,
+			conversationType(ch),
+			unreadStr,
+			latestText,
+		})
+	}
+
+	if appCtx.Output.Mode() == output.Plain {
+		return appCtx.Output.Table(nil, rows)
+	}
+
+	return appCtx.Output.Table([]string{"ID", "Name", "Type", "Unread", "Latest Message Preview"}, rows)
+}
+
+func (c *ReactionsAddCmd) Run(appCtx *app.Context) error {
+	client, err := appCtx.SlackClient()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := appCtx.RequestContext()
+	defer cancel()
+
+	channelID, err := appCtx.ResolveConversation(c.Channel)
+	if err != nil {
+		return err
+	}
+
+	emoji := strings.Trim(c.Emoji, ":")
+	if emoji == "" {
+		return errors.New("emoji name cannot be empty")
+	}
+
+	if err := client.ReactionsAdd(ctx, channelID, c.TS, emoji); err != nil {
+		return err
+	}
+
+	if appCtx.Output.Mode() == output.JSON {
+		return appCtx.Output.JSON(map[string]any{"channel": channelID, "ts": c.TS, "reaction": emoji, "ok": true})
+	}
+	if appCtx.Output.Mode() == output.Plain {
+		appCtx.Output.Lines([]string{"channel=" + channelID, "ts=" + c.TS, "reaction=" + emoji, "ok=true"})
+		return nil
+	}
+	appCtx.Output.Lines([]string{"Added reaction", "Channel: " + channelID, "Timestamp: " + c.TS, "Emoji: " + emoji})
+	return nil
+}
+
+func (c *ReactionsRemoveCmd) Run(appCtx *app.Context) error {
+	client, err := appCtx.SlackClient()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := appCtx.RequestContext()
+	defer cancel()
+
+	channelID, err := appCtx.ResolveConversation(c.Channel)
+	if err != nil {
+		return err
+	}
+
+	emoji := strings.Trim(c.Emoji, ":")
+	if emoji == "" {
+		return errors.New("emoji name cannot be empty")
+	}
+
+	if err := client.ReactionsRemove(ctx, channelID, c.TS, emoji); err != nil {
+		return err
+	}
+
+	if appCtx.Output.Mode() == output.JSON {
+		return appCtx.Output.JSON(map[string]any{"channel": channelID, "ts": c.TS, "reaction": emoji, "ok": true})
+	}
+	if appCtx.Output.Mode() == output.Plain {
+		appCtx.Output.Lines([]string{"channel=" + channelID, "ts=" + c.TS, "reaction=" + emoji, "ok=true"})
+		return nil
+	}
+	appCtx.Output.Lines([]string{"Removed reaction", "Channel: " + channelID, "Timestamp: " + c.TS, "Emoji: " + emoji})
+	return nil
+}
+
+func (c *ReactionsListCmd) Run(appCtx *app.Context) error {
+	client, err := appCtx.SlackClient()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := appCtx.RequestContext()
+	defer cancel()
+
+	channelID, err := appCtx.ResolveConversation(c.Channel)
+	if err != nil {
+		return err
+	}
+
+	response, err := client.ReactionsGet(ctx, channelID, c.TS, c.Full)
+	if err != nil {
+		return err
+	}
+
+	if appCtx.Output.Mode() == output.JSON {
+		return appCtx.Output.JSON(response)
+	}
+
+	rows := make([][]string, 0, len(response.Message.Reactions))
+	for _, reaction := range response.Message.Reactions {
+		users := ""
+		if c.Full && len(reaction.Users) > 0 {
+			users = strings.Join(reaction.Users, ", ")
+		}
+		rows = append(rows, []string{
+			reaction.Name,
+			strconv.Itoa(reaction.Count),
+			users,
+		})
+	}
+
+	if appCtx.Output.Mode() == output.Plain {
+		if c.Full {
+			return appCtx.Output.Table(nil, rows)
+		}
+		lines := make([]string, 0, len(rows))
+		for _, r := range rows {
+			lines = append(lines, r[0]+"="+r[1])
+		}
+		appCtx.Output.Lines(lines)
+		return nil
+	}
+
+	headers := []string{"Emoji", "Count"}
+	if c.Full {
+		headers = append(headers, "Users")
+	}
+	return appCtx.Output.Table(headers, rows)
 }
 
 func collectUsers(ctx context.Context, client *slackapi.Client, limit int, cursor string, all bool) ([]slackapi.User, error) {

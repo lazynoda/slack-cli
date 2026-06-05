@@ -46,7 +46,7 @@ func newResolvedTestContext(t *testing.T, mode output.Mode) (*app.Context, *byte
 		case "/users.getPresence":
 			_, _ = w.Write([]byte(`{"ok":true,"presence":"active","online":true}`))
 		case "/conversations.list":
-			_, _ = w.Write([]byte(`{"ok":true,"channels":[{"id":"C1","name":"general"},{"id":"D1","is_im":true,"user":"U1"}]}`))
+			_, _ = w.Write([]byte(`{"ok":true,"channels":[{"id":"C1","name":"general","unread_count_display":2,"latest":{"ts":"2.0","text":"hello"}},{"id":"D1","is_im":true,"user":"U1","unread_count":1},{"id":"C2","name":"random","last_read":"1.0","latest":{"ts":"2.0","text":"random message"}}]} `))
 		case "/conversations.info":
 			_, _ = w.Write([]byte(`{"ok":true,"channel":{"id":"C1","name":"general","last_read":"1.0","unread_count_display":1}}`))
 		case "/conversations.history":
@@ -83,6 +83,10 @@ func newResolvedTestContext(t *testing.T, mode output.Mode) (*app.Context, *byte
 			_, _ = w.Write([]byte(`{"ok":true,"channel":"C1","permalink":"https://example.test"}`))
 		case "/search.messages":
 			_, _ = w.Write([]byte(`{"ok":true,"query":"q","messages":{"matches":[{"channel":{"name":"general"},"username":"alice","ts":"1.0","text":"hit","permalink":"https://example.test"}],"total":1}}`))
+		case "/reactions.add", "/reactions.remove":
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		case "/reactions.get":
+			_, _ = w.Write([]byte(`{"ok":true,"type":"message","channel":"C1","message":{"ts":"1.2","text":"hi","reactions":[{"name":"thumbsup","count":1,"users":["U1"]}]}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"ok":false,"error":"not_found"}`))
@@ -243,6 +247,15 @@ func TestValidationErrors(t *testing.T) {
 	if err := (&SearchMessagesCmd{Count: 1, Page: 0}).Run(ctx); err == nil {
 		t.Fatal("SearchMessagesCmd.Run() page error = nil")
 	}
+	if err := (&ConversationsInboxCmd{Limit: 0}).Run(ctx); err == nil {
+		t.Fatal("ConversationsInboxCmd.Run() error = nil")
+	}
+	if err := (&ReactionsAddCmd{Emoji: "   "}).Run(ctx); err == nil {
+		t.Fatal("ReactionsAddCmd.Run() error = nil")
+	}
+	if err := (&ReactionsRemoveCmd{Emoji: "   "}).Run(ctx); err == nil {
+		t.Fatal("ReactionsRemoveCmd.Run() error = nil")
+	}
 	if err := (&AuthSetTokenCmd{Token: "   "}).Run(ctx); err == nil {
 		t.Fatal("AuthSetTokenCmd.Run() error = nil")
 	}
@@ -294,6 +307,10 @@ func TestCommandErrorsWithoutToken(t *testing.T) {
 		{"chat delete", func() error { return (&ChatDeleteCmd{Channel: "#general", TS: "1.0"}).Run(ctx) }},
 		{"chat permalink", func() error { return (&ChatPermalinkCmd{Channel: "#general", TS: "1.0"}).Run(ctx) }},
 		{"search messages", func() error { return (&SearchMessagesCmd{Query: "q", Count: 1, Page: 1}).Run(ctx) }},
+		{"conversations inbox", func() error { return (&ConversationsInboxCmd{Limit: 1}).Run(ctx) }},
+		{"reactions add", func() error { return (&ReactionsAddCmd{Channel: "#general", TS: "1.0", Emoji: "thumbsup"}).Run(ctx) }},
+		{"reactions remove", func() error { return (&ReactionsRemoveCmd{Channel: "#general", TS: "1.0", Emoji: "thumbsup"}).Run(ctx) }},
+		{"reactions list", func() error { return (&ReactionsListCmd{Channel: "#general", TS: "1.0"}).Run(ctx) }},
 	}
 
 	for _, check := range checks {
@@ -361,6 +378,14 @@ func TestCommandEndpointErrors(t *testing.T) {
 		{"chat delete", func() error { return (&ChatDeleteCmd{Channel: "#general", TS: "1.0"}).Run(resolverCtx) }},
 		{"chat permalink", func() error { return (&ChatPermalinkCmd{Channel: "#general", TS: "1.0"}).Run(resolverCtx) }},
 		{"search messages", func() error { return (&SearchMessagesCmd{Query: "q", Count: 1, Page: 1}).Run(directCtx) }},
+		{"conversations inbox", func() error { return (&ConversationsInboxCmd{Limit: 1}).Run(directCtx) }},
+		{"reactions add", func() error {
+			return (&ReactionsAddCmd{Channel: "#general", TS: "1.0", Emoji: "thumbsup"}).Run(resolverCtx)
+		}},
+		{"reactions remove", func() error {
+			return (&ReactionsRemoveCmd{Channel: "#general", TS: "1.0", Emoji: "thumbsup"}).Run(resolverCtx)
+		}},
+		{"reactions list", func() error { return (&ReactionsListCmd{Channel: "#general", TS: "1.0"}).Run(resolverCtx) }},
 	}
 
 	for _, check := range checks {
@@ -414,6 +439,10 @@ func TestCommandRunsAgainstFakeSlack(t *testing.T) {
 		{"search messages", func() error {
 			return (&SearchMessagesCmd{Query: "q", Count: 20, Page: 1, Sort: "score", SortDir: "desc"}).Run(ctx)
 		}},
+		{"conversations inbox", func() error { return (&ConversationsInboxCmd{Limit: 10}).Run(ctx) }},
+		{"reactions add", func() error { return (&ReactionsAddCmd{Channel: "#general", TS: "1.2", Emoji: "thumbsup"}).Run(ctx) }},
+		{"reactions remove", func() error { return (&ReactionsRemoveCmd{Channel: "#general", TS: "1.2", Emoji: "thumbsup"}).Run(ctx) }},
+		{"reactions list", func() error { return (&ReactionsListCmd{Channel: "#general", TS: "1.2"}).Run(ctx) }},
 	}
 
 	for _, check := range checks {
@@ -510,6 +539,24 @@ func TestAdditionalCommandModes(t *testing.T) {
 		func() error {
 			return (&SearchMessagesCmd{Query: "q", Count: 20, Page: 1, Sort: "score", SortDir: "desc"}).Run(plainCtx)
 		},
+		func() error { return (&ConversationsInboxCmd{Limit: 10}).Run(jsonCtx) },
+		func() error { return (&ConversationsInboxCmd{Limit: 10}).Run(plainCtx) },
+		func() error {
+			return (&ReactionsAddCmd{Channel: "#general", TS: "1.2", Emoji: "thumbsup"}).Run(jsonCtx)
+		},
+		func() error {
+			return (&ReactionsAddCmd{Channel: "#general", TS: "1.2", Emoji: "thumbsup"}).Run(plainCtx)
+		},
+		func() error {
+			return (&ReactionsRemoveCmd{Channel: "#general", TS: "1.2", Emoji: "thumbsup"}).Run(jsonCtx)
+		},
+		func() error {
+			return (&ReactionsRemoveCmd{Channel: "#general", TS: "1.2", Emoji: "thumbsup"}).Run(plainCtx)
+		},
+		func() error { return (&ReactionsListCmd{Channel: "#general", TS: "1.2"}).Run(jsonCtx) },
+		func() error { return (&ReactionsListCmd{Channel: "#general", TS: "1.2"}).Run(plainCtx) },
+		func() error { return (&ReactionsListCmd{Channel: "#general", TS: "1.2", Full: true}).Run(jsonCtx) },
+		func() error { return (&ReactionsListCmd{Channel: "#general", TS: "1.2", Full: true}).Run(plainCtx) },
 	}
 
 	for i, check := range checks {

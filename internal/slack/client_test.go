@@ -62,6 +62,10 @@ func newSlackTestServer(t *testing.T) *httptest.Server {
 			_, _ = w.Write([]byte(`{"ok":true,"channel":"C1","permalink":"https://example.test"}`))
 		case "/search.messages":
 			_, _ = w.Write([]byte(`{"ok":true,"query":"q","messages":{"matches":[{"text":"hit","ts":"1.0"}],"total":1}}`))
+		case "/reactions.add", "/reactions.remove":
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		case "/reactions.get":
+			_, _ = w.Write([]byte(`{"ok":true,"type":"message","channel":"C1","message":{"ts":"1.2","text":"hi","reactions":[{"name":"thumbsup","count":1,"users":["U1"]}]}}`))
 		case "/invalid":
 			_, _ = w.Write([]byte(`{"ok":false,"error":"invalid_auth"}`))
 		case "/badhttp":
@@ -178,6 +182,12 @@ func TestClientMethodWrappers(t *testing.T) {
 		func() error { _, err := client.SearchMessages(ctx, "q", 20, 1, "score", "desc", "", false); return err },
 		func() error {
 			_, err := client.SearchMessages(ctx, "q", 20, 2, "timestamp", "asc", "cursor", true)
+			return err
+		},
+		func() error { return client.ReactionsAdd(ctx, "C1", "1.2", "thumbsup") },
+		func() error { return client.ReactionsRemove(ctx, "C1", "1.2", "thumbsup") },
+		func() error {
+			_, err := client.ReactionsGet(ctx, "C1", "1.2", true)
 			return err
 		},
 	}
