@@ -82,13 +82,25 @@ Avoid by default:
 
 ## Verification
 
+Always ensure that all code compiles, format checks pass, lint checks pass, and tests run cleanly before pushing any code to the repository (matching what the GitHub CI workflow does).
+
 Typical verification commands:
 
 ```bash
-gofmt -w internal/app/context.go internal/cli/cli.go internal/slack/client.go
+# Check and apply Go formatting
+gofmt -s -w .
+
+# Run the linter to ensure all static checks pass
+golangci-lint run
+
+# Build the executable
 go build ./cmd/slack-cli
-go test ./...
-go run ./cmd/slack-cli --help
+
+# Run all unit tests and verify coverage
+./scripts/check-coverage.sh
+
+# Verify CLI wiring
+./slack-cli --help
 ```
 
 If you change command wiring, also run targeted help commands for the affected namespace.
