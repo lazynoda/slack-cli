@@ -128,6 +128,10 @@ You can refer to users and channels by friendly names (e.g., `@alice`, `#general
 # Read unread messages in a channel
 # (Only works if last_read cursor is returned by Slack for the active credentials)
 ./slack-cli conversations unread #general
+
+# Get unread message counts across all channels & DMs in a single request
+# (Requires user session cookie/token authentication)
+./slack-cli api call users.counts
 ```
 
 ---
@@ -192,14 +196,10 @@ To parse output programmatically, use `--json` combined with `jq`:
 ./slack-cli --json conversations list | jq -r '.channels[] | select(.name=="general") | .id'
 ```
 
-### Monitor New Unreads across Channels
+### Fetch All Channels/DMs with Unread Messages (Single Command)
 ```bash
-for chan in $(./slack-cli --plain conversations list | awk '{print $1}'); do
-  unreads=$(./slack-cli --json conversations unread "$chan" 2>/dev/null | jq '.messages | length')
-  if [ "$unreads" -gt 0 ]; then
-    echo "Channel $chan has $unreads unread messages!"
-  fi
-done
+# Get channels and private groups with active unread counts
+./slack-cli --json api call users.counts | jq '[.channels[], .groups[]] | .[] | select(.unread_count > 0) | {name, unread_count}'
 ```
 
 ---
