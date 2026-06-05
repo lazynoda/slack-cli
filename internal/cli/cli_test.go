@@ -956,3 +956,18 @@ func TestExtractChromeToken(t *testing.T) {
 		}
 	})
 }
+
+func TestIsNewer(t *testing.T) {
+	if !isNewer("2.0", "1.0") {
+		t.Error("expected 2.0 > 1.0")
+	}
+	if isNewer("1.0", "2.0") {
+		t.Error("expected 1.0 < 2.0")
+	}
+	if !isNewer("abc", "abb") {
+		t.Error("expected abc > abb (string fallback)")
+	}
+	if isNewer("1.0", "abc") {
+		t.Error("expected fallback for mixed")
+	}
+}

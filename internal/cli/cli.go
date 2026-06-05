@@ -1722,11 +1722,57 @@ func (c *ConversationsInboxCmd) Run(appCtx *app.Context) error {
 		return err
 	}
 
-	var unreadConversations []slackapi.Conversation
+	var candidateChannels []slackapi.Conversation
 	for _, ch := range channels {
+		if ch.IsMember || ch.IsIM || ch.IsMpIM {
+			candidateChannels = append(candidateChannels, ch)
+		}
+	}
+
+	type result struct {
+		ch  slackapi.Conversation
+		err error
+	}
+	resChan := make(chan result, len(candidateChannels))
+	sem := make(chan struct{}, 15)
+
+	for _, ch := range candidateChannels {
+		go func(c slackapi.Conversation) {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			info, err := client.ConversationsInfo(ctx, c.ID, false)
+			if err != nil {
+				resChan <- result{ch: c, err: err}
+				return
+			}
+			chInfo := info.Channel
+
+			// Always fetch the latest message to compare with last_read
+			history, err := client.ConversationsHistory(ctx, chInfo.ID, 1, "", "", "", false)
+			if err == nil && len(history.Messages) > 0 {
+				chInfo.Latest = &history.Messages[0]
+			}
+
+			resChan <- result{ch: chInfo, err: nil}
+		}(ch)
+	}
+
+	var resolvedChannels []slackapi.Conversation
+	for i := 0; i < len(candidateChannels); i++ {
+		res := <-resChan
+		if res.err == nil {
+			resolvedChannels = append(resolvedChannels, res.ch)
+		} else {
+			resolvedChannels = append(resolvedChannels, res.ch)
+		}
+	}
+
+	var unreadConversations []slackapi.Conversation
+	for _, ch := range resolvedChannels {
 		isUnread := ch.UnreadCount > 0 || ch.UnreadCountDisplay > 0
 		if !isUnread && ch.LastRead != "" && ch.Latest != nil {
-			if ch.Latest.Ts > ch.LastRead {
+			if isNewer(ch.Latest.Ts, ch.LastRead) {
 				isUnread = true
 			}
 		}
@@ -2244,4 +2290,13 @@ func valueOr(value string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func isNewer(ts1, ts2 string) bool {
+	f1, err1 := strconv.ParseFloat(ts1, 64)
+	f2, err2 := strconv.ParseFloat(ts2, 64)
+	if err1 == nil && err2 == nil {
+		return f1 > f2
+	}
+	return ts1 > ts2
 }
