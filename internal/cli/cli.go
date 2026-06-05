@@ -2,12 +2,19 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/steipete/sweetcookie"
+	"github.com/syndtr/goleveldb/leveldb"
 
 	"slack-cli/internal/app"
 	"slack-cli/internal/output"
@@ -34,10 +41,13 @@ type Globals struct {
 }
 
 type AuthCmd struct {
-	Status   AuthStatusCmd   `cmd:"" help:"Show configured authentication state."`
-	SetToken AuthSetTokenCmd `cmd:"" name:"set-token" help:"Save a Slack token in the current profile."`
-	Clear    AuthClearCmd    `cmd:"" help:"Clear the stored token for the current profile."`
-	Test     AuthTestCmd     `cmd:"" help:"Call auth.test with the active token."`
+	Status       AuthStatusCmd       `cmd:"" help:"Show configured authentication state."`
+	SetToken     AuthSetTokenCmd     `cmd:"" name:"set-token" help:"Save a Slack token in the current profile."`
+	Clear        AuthClearCmd        `cmd:"" help:"Clear the stored token for the current profile."`
+	Test         AuthTestCmd         `cmd:"" help:"Call auth.test with the active token."`
+	SetCookie    AuthSetCookieCmd    `cmd:"" name:"set-cookie" help:"Save a Slack cookie in the current profile."`
+	ClearCookie  AuthClearCookieCmd  `cmd:"" name:"clear-cookie" help:"Clear the stored cookie for the current profile."`
+	ImportCookie AuthImportCookieCmd `cmd:"" name:"import-cookie" help:"Import Slack cookie from a local browser profile."`
 }
 
 type APICmd struct {
@@ -285,6 +295,7 @@ func (c *AuthStatusCmd) Run(appCtx *app.Context) error {
 		"token_masked":      maskToken(token),
 		"cookie_source":     cookieSource,
 		"cookie_configured": cookie != "",
+		"cookie_masked":     maskCookie(cookie),
 	}
 
 	switch appCtx.Output.Mode() {
@@ -299,6 +310,7 @@ func (c *AuthStatusCmd) Run(appCtx *app.Context) error {
 			"token_masked=" + maskToken(token),
 			"cookie_configured=" + strconv.FormatBool(cookie != ""),
 			"cookie_source=" + cookieSource,
+			"cookie_masked=" + maskCookie(cookie),
 		})
 	default:
 		appCtx.Output.Lines([]string{
@@ -309,6 +321,7 @@ func (c *AuthStatusCmd) Run(appCtx *app.Context) error {
 			"Token: " + valueOr(maskToken(token), "not configured"),
 			"Cookie configured: " + strconv.FormatBool(cookie != ""),
 			"Cookie source: " + valueOr(cookieSource, "not configured"),
+			"Cookie: " + valueOr(maskCookie(cookie), "not configured"),
 		})
 	}
 
@@ -392,6 +405,373 @@ func (c *AuthClearCmd) Run(appCtx *app.Context) error {
 }
 
 type AuthClearCmd struct{}
+
+func (c *AuthSetCookieCmd) Run(appCtx *app.Context) error {
+	cookie := strings.TrimSpace(c.Cookie)
+	if cookie == "" {
+		return errors.New("cookie cannot be empty")
+	}
+
+	appCtx.Config.SetCookie(appCtx.Settings.Profile, cookie)
+	if err := appCtx.SaveConfig(); err != nil {
+		return err
+	}
+
+	response := map[string]any{
+		"config_path":   appCtx.ConfigPath,
+		"profile":       appCtx.Settings.Profile,
+		"cookie_masked": maskCookie(cookie),
+	}
+
+	if appCtx.Output.Mode() == output.JSON {
+		return appCtx.Output.JSON(response)
+	}
+
+	if appCtx.Output.Mode() == output.Plain {
+		appCtx.Output.Lines([]string{
+			"config_path=" + appCtx.ConfigPath,
+			"profile=" + appCtx.Settings.Profile,
+			"cookie_masked=" + maskCookie(cookie),
+		})
+		return nil
+	}
+
+	appCtx.Output.Lines([]string{
+		"Saved cookie for profile " + appCtx.Settings.Profile,
+		"Config: " + appCtx.ConfigPath,
+		"Cookie: " + maskCookie(cookie),
+	})
+	return nil
+}
+
+type AuthSetCookieCmd struct {
+	Cookie string `arg:"" help:"Slack cookie to store, for example d=xoxd-..."`
+}
+
+func (c *AuthClearCookieCmd) Run(appCtx *app.Context) error {
+	appCtx.Config.ClearCookie(appCtx.Settings.Profile)
+	if err := appCtx.SaveConfig(); err != nil {
+		return err
+	}
+
+	response := map[string]any{
+		"config_path": appCtx.ConfigPath,
+		"profile":     appCtx.Settings.Profile,
+		"cleared":     true,
+	}
+
+	if appCtx.Output.Mode() == output.JSON {
+		return appCtx.Output.JSON(response)
+	}
+
+	if appCtx.Output.Mode() == output.Plain {
+		appCtx.Output.Lines([]string{
+			"config_path=" + appCtx.ConfigPath,
+			"profile=" + appCtx.Settings.Profile,
+			"cleared=true",
+		})
+		return nil
+	}
+
+	appCtx.Output.Lines([]string{
+		"Cleared stored cookie for profile " + appCtx.Settings.Profile,
+		"Config: " + appCtx.ConfigPath,
+	})
+	return nil
+}
+
+type AuthClearCookieCmd struct{}
+
+var sweetcookieGet = sweetcookie.Get
+
+func (c *AuthImportCookieCmd) Run(appCtx *app.Context) error {
+	var b sweetcookie.Browser
+	switch strings.ToLower(c.Browser) {
+	case "chrome":
+		b = sweetcookie.BrowserChrome
+	case "chromium":
+		b = sweetcookie.BrowserChromium
+	case "edge":
+		b = sweetcookie.BrowserEdge
+	case "firefox":
+		b = sweetcookie.BrowserFirefox
+	case "safari":
+		b = sweetcookie.BrowserSafari
+	case "brave":
+		b = sweetcookie.BrowserBrave
+	case "vivaldi":
+		b = sweetcookie.BrowserVivaldi
+	case "opera":
+		b = sweetcookie.BrowserOpera
+	case "arc":
+		b = sweetcookie.BrowserArc
+	default:
+		return fmt.Errorf("unsupported browser %q", c.Browser)
+	}
+
+	ctx, cancel := appCtx.RequestContext()
+	defer cancel()
+
+	if appCtx.Output.Mode() == output.Human {
+		appCtx.Output.Lines([]string{"Reading browser cookies..."})
+	}
+
+	var candidates []string
+	if c.BrowserProfile != "" {
+		candidates = []string{c.BrowserProfile}
+	} else {
+		// Try Default first, then common profile names
+		candidates = []string{"", "Default", "Profile 1", "Profile 2", "Profile 3", "Profile 4", "Profile 5", "Profile 6", "Profile 7", "Profile 8", "Profile 9", "Profile 10"}
+	}
+
+	cookieValue := ""
+	tokenValue := ""
+	var lastErr error
+	var allWarnings []string
+
+	for _, profile := range candidates {
+		profilesMap := make(map[sweetcookie.Browser]string)
+		if profile != "" {
+			profilesMap[b] = profile
+		}
+
+		res, err := sweetcookieGet(ctx, sweetcookie.Options{
+			URL:      "https://slack.com/",
+			Names:    []string{"d"},
+			Browsers: []sweetcookie.Browser{b},
+			Profiles: profilesMap,
+			Timeout:  30 * time.Second,
+		})
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		allWarnings = append(allWarnings, res.Warnings...)
+
+		for _, cookie := range res.Cookies {
+			if cookie.Name == "d" && cookie.Value != "" {
+				cookieValue = "d=" + cookie.Value
+				break
+			}
+		}
+
+		if cookieValue != "" {
+			// Extract token from this profile's leveldb if it's a chromium browser
+			baseDir, err := getBrowserUserDataDir(c.Browser)
+			if err == nil {
+				profileName := profile
+				if profileName == "" {
+					profileName = "Default"
+				}
+				profileDir := filepath.Join(baseDir, profileName)
+				token, err := extractChromeToken(profileDir)
+				if err == nil {
+					tokenValue = token
+				} else {
+					allWarnings = append(allWarnings, fmt.Sprintf("failed to extract token from local storage in profile %q: %v", profileName, err))
+				}
+			}
+			break
+		}
+	}
+
+	if cookieValue == "" {
+		for _, w := range allWarnings {
+			appCtx.Output.Errorf("Warning: %s", w)
+		}
+		if lastErr != nil {
+			return fmt.Errorf("could not find Slack authentication cookie 'd' in browser %s: %w", c.Browser, lastErr)
+		}
+		return fmt.Errorf("could not find Slack authentication cookie 'd' in browser %s (checked profiles: %v)", c.Browser, candidates)
+	}
+
+	appCtx.Config.SetCookie(appCtx.Settings.Profile, cookieValue)
+	if tokenValue != "" {
+		appCtx.Config.SetToken(appCtx.Settings.Profile, tokenValue)
+	}
+	if err := appCtx.SaveConfig(); err != nil {
+		return err
+	}
+
+	response := map[string]any{
+		"config_path":   appCtx.ConfigPath,
+		"profile":       appCtx.Settings.Profile,
+		"cookie_masked": maskCookie(cookieValue),
+		"token_masked":  maskToken(tokenValue),
+	}
+
+	if appCtx.Output.Mode() == output.JSON {
+		return appCtx.Output.JSON(response)
+	}
+
+	if appCtx.Output.Mode() == output.Plain {
+		appCtx.Output.Lines([]string{
+			"config_path=" + appCtx.ConfigPath,
+			"profile=" + appCtx.Settings.Profile,
+			"cookie_masked=" + maskCookie(cookieValue),
+			"token_masked=" + maskToken(tokenValue),
+		})
+		return nil
+	}
+
+	appCtx.Output.Lines([]string{
+		"Saved cookie and token for profile " + appCtx.Settings.Profile,
+		"Config: " + appCtx.ConfigPath,
+		"Cookie: " + maskCookie(cookieValue),
+		"Token:  " + valueOr(maskToken(tokenValue), "not found in local storage"),
+	})
+	return nil
+}
+
+func getBrowserUserDataDir(browser string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	browser = strings.ToLower(browser)
+	switch runtime.GOOS {
+	case "darwin":
+		switch browser {
+		case "chrome":
+			return filepath.Join(home, "Library/Application Support/Google/Chrome"), nil
+		case "brave":
+			return filepath.Join(home, "Library/Application Support/BraveSoftware/Brave-Browser"), nil
+		case "edge":
+			return filepath.Join(home, "Library/Application Support/Microsoft Edge"), nil
+		case "chromium":
+			return filepath.Join(home, "Library/Application Support/Chromium"), nil
+		case "vivaldi":
+			return filepath.Join(home, "Library/Application Support/Vivaldi"), nil
+		case "opera":
+			return filepath.Join(home, "Library/Application Support/com.operasoftware.Opera"), nil
+		case "arc":
+			return filepath.Join(home, "Library/Application Support/Arc"), nil
+		}
+	case "linux":
+		switch browser {
+		case "chrome":
+			return filepath.Join(home, ".config/google-chrome"), nil
+		case "brave":
+			return filepath.Join(home, ".config/BraveSoftware/Brave-Browser"), nil
+		case "edge":
+			return filepath.Join(home, ".config/microsoft-edge"), nil
+		case "chromium":
+			return filepath.Join(home, ".config/chromium"), nil
+		}
+	case "windows":
+		localAppData := os.Getenv("LOCALAPPDATA")
+		switch browser {
+		case "chrome":
+			return filepath.Join(localAppData, "Google/Chrome/User Data"), nil
+		case "brave":
+			return filepath.Join(localAppData, "BraveSoftware/Brave-Browser/User Data"), nil
+		case "edge":
+			return filepath.Join(localAppData, "Microsoft/Edge/User Data"), nil
+		case "chromium":
+			return filepath.Join(localAppData, "Chromium/User Data"), nil
+		}
+	}
+
+	return "", fmt.Errorf("unsupported browser/OS combination: %s/%s", browser, runtime.GOOS)
+}
+
+func extractChromeToken(profilePath string) (string, error) {
+	leveldbPath := filepath.Join(profilePath, "Local Storage", "leveldb")
+	if _, err := os.Stat(leveldbPath); err != nil {
+		return "", err
+	}
+
+	// Copy the leveldb files to a temp directory to avoid database locking
+	tmpDir, err := os.MkdirTemp("", "slack-cli-leveldb-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	files, err := os.ReadDir(leveldbPath)
+	if err != nil {
+		return "", err
+	}
+
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+		srcFile := filepath.Join(leveldbPath, file.Name())
+		dstFile := filepath.Join(tmpDir, file.Name())
+		data, err := os.ReadFile(srcFile)
+		if err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(dstFile, data, 0644); err != nil {
+			return "", err
+		}
+	}
+
+	db, err := leveldb.OpenFile(tmpDir, nil)
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+
+	iter := db.NewIterator(nil, nil)
+	defer iter.Release()
+
+	var jsonBytes []byte
+	for iter.Next() {
+		key := string(iter.Key())
+		if strings.Contains(key, "localConfig_v2") {
+			val := iter.Value()
+			jsonStart := -1
+			for i, b := range val {
+				if b == '{' {
+					jsonStart = i
+					break
+				}
+			}
+			if jsonStart != -1 {
+				jsonBytes = val[jsonStart:]
+				break
+			}
+		}
+	}
+
+	if err := iter.Error(); err != nil {
+		return "", err
+	}
+
+	if len(jsonBytes) == 0 {
+		return "", errors.New("localConfig_v2 not found in leveldb")
+	}
+
+	type TeamInfo struct {
+		Token string `json:"token"`
+	}
+	type LocalConfig struct {
+		Teams map[string]TeamInfo `json:"teams"`
+	}
+
+	var cfg LocalConfig
+	if err := json.Unmarshal(jsonBytes, &cfg); err != nil {
+		return "", fmt.Errorf("parse localConfig_v2 JSON: %w", err)
+	}
+
+	// Get the first token
+	for _, team := range cfg.Teams {
+		if token := strings.TrimSpace(team.Token); token != "" {
+			return token, nil
+		}
+	}
+
+	return "", errors.New("no team tokens found in localConfig_v2")
+}
+
+type AuthImportCookieCmd struct {
+	Browser        string `default:"chrome" enum:"chrome,chromium,edge,firefox,safari,brave,vivaldi,opera,arc" help:"Browser to extract cookies from."`
+	BrowserProfile string `name:"browser-profile" help:"Browser profile name or directory (e.g. 'Default', 'Profile 1')."`
+}
 
 func (c *AuthTestCmd) Run(appCtx *app.Context) error {
 	client, err := appCtx.SlackClient()
@@ -1590,6 +1970,24 @@ func maskToken(token string) string {
 		return token[:2] + strings.Repeat("*", len(token)-2)
 	}
 	return token[:6] + strings.Repeat("*", len(token)-10) + token[len(token)-4:]
+}
+
+func maskCookie(cookie string) string {
+	cookie = strings.TrimSpace(cookie)
+	if cookie == "" {
+		return ""
+	}
+	if strings.HasPrefix(cookie, "d=") {
+		val := cookie[2:]
+		if len(val) <= 10 {
+			return "d=" + val[:2] + strings.Repeat("*", len(val)-2)
+		}
+		return "d=" + val[:6] + strings.Repeat("*", len(val)-10) + val[len(val)-4:]
+	}
+	if len(cookie) <= 10 {
+		return cookie[:2] + strings.Repeat("*", len(cookie)-2)
+	}
+	return cookie[:6] + strings.Repeat("*", len(cookie)-10) + cookie[len(cookie)-4:]
 }
 
 func truncate(value string, limit int) string {

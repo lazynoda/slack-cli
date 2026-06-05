@@ -6,10 +6,10 @@ It uses Slack bearer tokens with the official Web API at `https://slack.com/api/
 
 ## Features
 
-- Profile-based token storage in `os.UserConfigDir()/slack-cli/config.json`
+- Profile-based token and cookie storage in `os.UserConfigDir()/slack-cli/config.json`
 - Env var override via `SLACK_CLI_TOKEN` or `SLACK_TOKEN`
-- Optional cookie header support via `SLACK_CLI_COOKIE` or `SLACK_COOKIE`
-- `auth status`, `auth set-token`, `auth clear`, `auth test`
+- Optional cookie header support via `SLACK_CLI_COOKIE` or `SLACK_COOKIE` (or stored in config profile)
+- `auth status`, `auth set-token`, `auth clear`, `auth test`, `auth set-cookie`, `auth clear-cookie`, `auth import-cookie`
 - Raw `api call` for any Slack Web API method
 - `users list|info|presence`
 - `conversations list|info|history|replies|members|open|join|leave|create|rename|topic|purpose|archive|unarchive|mark|unread`
@@ -71,7 +71,7 @@ Global flags:
 
 Commands:
 
-- `auth status|set-token|clear|test`
+- `auth status|set-token|clear|test|set-cookie|clear-cookie|import-cookie`
 - `api call`
 - `resolve user|conversation`
 - `users list|info|presence`
@@ -100,7 +100,7 @@ Exact scope requirements depend on the token type and the methods you call.
 - `conversations unread` derives unread messages from `conversations.info` -> `last_read` plus `conversations.history`; it depends on Slack returning `last_read` for the active token and conversation.
 - `api call` is intentionally thin and prints JSON so you can reach any Slack Web API method before adding a typed command.
 - If both config and env vars are present, env vars win.
-- If Slack requires a cookie-backed session for your token, set `SLACK_COOKIE` to the raw `Cookie` header value and the CLI will send it with each request.
+- If Slack requires a cookie-backed session for your token, set `SLACK_COOKIE` to the raw `Cookie` header value, or import it using `auth import-cookie` which also automatically extracts the client token (`xoxc-...`) from your Chromium browser's LevelDB Local Storage (`localConfig_v2` key).
 
 ## Inspiration
 

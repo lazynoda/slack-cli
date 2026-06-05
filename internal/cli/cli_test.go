@@ -3,12 +3,18 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/steipete/sweetcookie"
+	"github.com/syndtr/goleveldb/leveldb"
 
 	"slack-cli/internal/app"
 	"slack-cli/internal/output"
@@ -240,6 +246,12 @@ func TestValidationErrors(t *testing.T) {
 	if err := (&AuthSetTokenCmd{Token: "   "}).Run(ctx); err == nil {
 		t.Fatal("AuthSetTokenCmd.Run() error = nil")
 	}
+	if err := (&AuthSetCookieCmd{Cookie: "   "}).Run(ctx); err == nil {
+		t.Fatal("AuthSetCookieCmd.Run() error = nil")
+	}
+	if err := (&AuthImportCookieCmd{Browser: "invalid"}).Run(ctx); err == nil {
+		t.Fatal("AuthImportCookieCmd.Run() error = nil")
+	}
 	if err := simpleConversationAction(ctx, "C1", "done", func(_ context.Context, _ *slackapi.Client) error { return nil }); err == nil {
 		t.Fatal("simpleConversationAction() error = nil")
 	}
@@ -323,7 +335,9 @@ func TestCommandEndpointErrors(t *testing.T) {
 		{"conversations list", func() error { return (&ConversationsListCmd{Limit: 1}).Run(directCtx) }},
 		{"conversations info", func() error { return (&ConversationsInfoCmd{Channel: "#general"}).Run(resolverCtx) }},
 		{"conversations history", func() error { return (&ConversationsHistoryCmd{Channel: "#general", Limit: 1}).Run(resolverCtx) }},
-		{"conversations replies", func() error { return (&ConversationsRepliesCmd{Channel: "#general", TS: "1.0", Limit: 1}).Run(resolverCtx) }},
+		{"conversations replies", func() error {
+			return (&ConversationsRepliesCmd{Channel: "#general", TS: "1.0", Limit: 1}).Run(resolverCtx)
+		}},
 		{"conversations members", func() error { return (&ConversationsMembersCmd{Channel: "#general", Limit: 1}).Run(resolverCtx) }},
 		{"conversations open", func() error { return (&ConversationsOpenCmd{Users: []string{"@alice"}}).Run(resolverCtx) }},
 		{"chat dm", func() error { return (&ChatDMCmd{Users: []string{"@alice", "hi"}}).Run(resolverCtx) }},
@@ -332,13 +346,17 @@ func TestCommandEndpointErrors(t *testing.T) {
 		{"conversations create", func() error { return (&ConversationsCreateCmd{Name: "new-room"}).Run(directCtx) }},
 		{"conversations rename", func() error { return (&ConversationsRenameCmd{Channel: "#general", Name: "renamed"}).Run(resolverCtx) }},
 		{"conversations topic", func() error { return (&ConversationsTopicCmd{Channel: "#general", Topic: "topic"}).Run(resolverCtx) }},
-		{"conversations purpose", func() error { return (&ConversationsPurposeCmd{Channel: "#general", Purpose: "purpose"}).Run(resolverCtx) }},
+		{"conversations purpose", func() error {
+			return (&ConversationsPurposeCmd{Channel: "#general", Purpose: "purpose"}).Run(resolverCtx)
+		}},
 		{"conversations archive", func() error { return (&ConversationsArchiveCmd{Channel: "#general"}).Run(resolverCtx) }},
 		{"conversations unarchive", func() error { return (&ConversationsUnarchiveCmd{Channel: "#general"}).Run(resolverCtx) }},
 		{"conversations mark", func() error { return (&ConversationsMarkCmd{Channel: "#general", TS: "1.0"}).Run(resolverCtx) }},
 		{"conversations unread", func() error { return (&ConversationsUnreadCmd{Channel: "#general", Limit: 1}).Run(resolverCtx) }},
 		{"chat send", func() error { return (&ChatSendCmd{Channel: "#general", Text: "hi"}).Run(resolverCtx) }},
-		{"chat ephemeral", func() error { return (&ChatEphemeralCmd{Channel: "#general", User: "@alice", Text: "hi"}).Run(resolverCtx) }},
+		{"chat ephemeral", func() error {
+			return (&ChatEphemeralCmd{Channel: "#general", User: "@alice", Text: "hi"}).Run(resolverCtx)
+		}},
 		{"chat update", func() error { return (&ChatUpdateCmd{Channel: "#general", TS: "1.0", Text: "hi"}).Run(resolverCtx) }},
 		{"chat delete", func() error { return (&ChatDeleteCmd{Channel: "#general", TS: "1.0"}).Run(resolverCtx) }},
 		{"chat permalink", func() error { return (&ChatPermalinkCmd{Channel: "#general", TS: "1.0"}).Run(resolverCtx) }},
@@ -361,6 +379,8 @@ func TestCommandRunsAgainstFakeSlack(t *testing.T) {
 	}{
 		{"auth status", func() error { return (&AuthStatusCmd{}).Run(ctx) }},
 		{"auth clear", func() error { return (&AuthClearCmd{}).Run(ctx) }},
+		{"auth set-cookie", func() error { return (&AuthSetCookieCmd{Cookie: "d=test-cookie"}).Run(ctx) }},
+		{"auth clear-cookie", func() error { return (&AuthClearCookieCmd{}).Run(ctx) }},
 		{"auth set-token", func() error { return (&AuthSetTokenCmd{Token: "xoxb-test"}).Run(ctx) }},
 		{"auth test", func() error { return (&AuthTestCmd{}).Run(ctx) }},
 		{"api call", func() error { return (&APICallCmd{Method: "auth.test", HTTPMethod: "POST"}).Run(ctx) }},
@@ -416,6 +436,10 @@ func TestAdditionalCommandModes(t *testing.T) {
 		func() error { return (&AuthStatusCmd{}).Run(plainCtx) },
 		func() error { return (&AuthClearCmd{}).Run(jsonCtx) },
 		func() error { return (&AuthClearCmd{}).Run(plainCtx) },
+		func() error { return (&AuthSetCookieCmd{Cookie: "d=test-cookie"}).Run(jsonCtx) },
+		func() error { return (&AuthSetCookieCmd{Cookie: "d=test-cookie"}).Run(plainCtx) },
+		func() error { return (&AuthClearCookieCmd{}).Run(jsonCtx) },
+		func() error { return (&AuthClearCookieCmd{}).Run(plainCtx) },
 		func() error { return (&AuthSetTokenCmd{Token: "xoxb-test"}).Run(jsonCtx) },
 		func() error { return (&AuthSetTokenCmd{Token: "xoxb-test"}).Run(plainCtx) },
 		func() error { return (&AuthTestCmd{}).Run(jsonCtx) },
@@ -436,8 +460,12 @@ func TestAdditionalCommandModes(t *testing.T) {
 		func() error { return (&ConversationsInfoCmd{Channel: "#general"}).Run(plainCtx) },
 		func() error { return (&ConversationsHistoryCmd{Channel: "#general", Limit: 10}).Run(jsonCtx) },
 		func() error { return (&ConversationsHistoryCmd{Channel: "#general", Limit: 10}).Run(plainCtx) },
-		func() error { return (&ConversationsRepliesCmd{Channel: "#general", TS: "1.0", Limit: 10}).Run(jsonCtx) },
-		func() error { return (&ConversationsRepliesCmd{Channel: "#general", TS: "1.0", Limit: 10}).Run(plainCtx) },
+		func() error {
+			return (&ConversationsRepliesCmd{Channel: "#general", TS: "1.0", Limit: 10}).Run(jsonCtx)
+		},
+		func() error {
+			return (&ConversationsRepliesCmd{Channel: "#general", TS: "1.0", Limit: 10}).Run(plainCtx)
+		},
 		func() error { return (&ConversationsMembersCmd{Channel: "#general", Limit: 10}).Run(jsonCtx) },
 		func() error { return (&ConversationsMembersCmd{Channel: "#general", Limit: 10}).Run(plainCtx) },
 		func() error { return (&ConversationsOpenCmd{Users: []string{"@alice"}}).Run(jsonCtx) },
@@ -467,15 +495,21 @@ func TestAdditionalCommandModes(t *testing.T) {
 		func() error { return (&ChatSendCmd{Channel: "#general", Text: "hi"}).Run(jsonCtx) },
 		func() error { return (&ChatSendCmd{Channel: "#general", Text: "hi"}).Run(plainCtx) },
 		func() error { return (&ChatEphemeralCmd{Channel: "#general", User: "@alice", Text: "hi"}).Run(jsonCtx) },
-		func() error { return (&ChatEphemeralCmd{Channel: "#general", User: "@alice", Text: "hi"}).Run(plainCtx) },
+		func() error {
+			return (&ChatEphemeralCmd{Channel: "#general", User: "@alice", Text: "hi"}).Run(plainCtx)
+		},
 		func() error { return (&ChatUpdateCmd{Channel: "#general", TS: "1.2", Text: "updated"}).Run(jsonCtx) },
 		func() error { return (&ChatUpdateCmd{Channel: "#general", TS: "1.2", Text: "updated"}).Run(plainCtx) },
 		func() error { return (&ChatDeleteCmd{Channel: "#general", TS: "1.2"}).Run(jsonCtx) },
 		func() error { return (&ChatDeleteCmd{Channel: "#general", TS: "1.2"}).Run(plainCtx) },
 		func() error { return (&ChatPermalinkCmd{Channel: "#general", TS: "1.2"}).Run(jsonCtx) },
 		func() error { return (&ChatPermalinkCmd{Channel: "#general", TS: "1.2"}).Run(plainCtx) },
-		func() error { return (&SearchMessagesCmd{Query: "q", Count: 20, Page: 1, Sort: "score", SortDir: "desc"}).Run(jsonCtx) },
-		func() error { return (&SearchMessagesCmd{Query: "q", Count: 20, Page: 1, Sort: "score", SortDir: "desc"}).Run(plainCtx) },
+		func() error {
+			return (&SearchMessagesCmd{Query: "q", Count: 20, Page: 1, Sort: "score", SortDir: "desc"}).Run(jsonCtx)
+		},
+		func() error {
+			return (&SearchMessagesCmd{Query: "q", Count: 20, Page: 1, Sort: "score", SortDir: "desc"}).Run(plainCtx)
+		},
 	}
 
 	for i, check := range checks {
@@ -555,4 +589,319 @@ func TestCollectorHelpersAndUnreadError(t *testing.T) {
 	if err := (&ConversationsUnreadCmd{Channel: "#general", Limit: 10}).Run(appCtx); err == nil {
 		t.Fatal("ConversationsUnreadCmd.Run(last_read missing) error = nil")
 	}
+}
+
+func TestAuthImportCookieCmd(t *testing.T) {
+	origGet := sweetcookieGet
+	defer func() { sweetcookieGet = origGet }()
+
+	t.Run("success with token extraction", func(t *testing.T) {
+		sweetcookieGet = func(ctx context.Context, opts sweetcookie.Options) (sweetcookie.Result, error) {
+			return sweetcookie.Result{
+				Cookies: []sweetcookie.Cookie{
+					{
+						Name:  "d",
+						Value: "cookie-secret-value",
+					},
+				},
+			}, nil
+		}
+
+		tempHome := t.TempDir()
+		t.Setenv("HOME", tempHome)
+		t.Setenv("USERPROFILE", tempHome)
+
+		// Set up mock LevelDB files for "Default" profile
+		var chromeBase string
+		switch runtime.GOOS {
+		case "darwin":
+			chromeBase = filepath.Join(tempHome, "Library/Application Support/Google/Chrome")
+		case "linux":
+			chromeBase = filepath.Join(tempHome, ".config/google-chrome")
+		case "windows":
+			chromeBase = filepath.Join(tempHome, "Google/Chrome/User Data")
+		}
+
+		if chromeBase != "" {
+			leveldbPath := filepath.Join(chromeBase, "Default", "Local Storage", "leveldb")
+			if err := os.MkdirAll(leveldbPath, 0755); err != nil {
+				t.Fatalf("MkdirAll() error = %v", err)
+			}
+			db, err := leveldb.OpenFile(leveldbPath, nil)
+			if err != nil {
+				t.Fatalf("leveldb.OpenFile() error = %v", err)
+			}
+			mockConfig := `{"teams":{"T1":{"token":"xoxc-mock-token-success"}}}`
+			val := append([]byte{1}, []byte(mockConfig)...)
+			if err := db.Put([]byte("_https://app.slack.com\x00\x01localConfig_v2"), val, nil); err != nil {
+				t.Fatalf("db.Put() error = %v", err)
+			}
+			db.Close()
+		}
+
+		appCtx := newTestAppContextNoToken(t, output.Human)
+		cmd := &AuthImportCookieCmd{Browser: "chrome"}
+		if err := cmd.Run(appCtx); err != nil {
+			t.Fatalf("AuthImportCookieCmd.Run() error = %v", err)
+		}
+
+		if got := appCtx.Config.Profile("default").Cookie; got != "d=cookie-secret-value" {
+			t.Fatalf("saved cookie = %q, want %q", got, "d=cookie-secret-value")
+		}
+		if chromeBase != "" {
+			if gotToken := appCtx.Config.Profile("default").Token; gotToken != "xoxc-mock-token-success" {
+				t.Fatalf("saved token = %q, want %q", gotToken, "xoxc-mock-token-success")
+			}
+		}
+	})
+
+	t.Run("success with explicit browser profile", func(t *testing.T) {
+		sweetcookieGet = func(ctx context.Context, opts sweetcookie.Options) (sweetcookie.Result, error) {
+			if opts.Profiles[sweetcookie.BrowserChrome] != "Profile 5" {
+				return sweetcookie.Result{}, errors.New("expected Profile 5")
+			}
+			return sweetcookie.Result{
+				Cookies: []sweetcookie.Cookie{
+					{
+						Name:  "d",
+						Value: "cookie-secret-value-5",
+					},
+				},
+			}, nil
+		}
+
+		tempHome := t.TempDir()
+		t.Setenv("HOME", tempHome)
+		t.Setenv("USERPROFILE", tempHome)
+
+		var chromeBase string
+		switch runtime.GOOS {
+		case "darwin":
+			chromeBase = filepath.Join(tempHome, "Library/Application Support/Google/Chrome")
+		case "linux":
+			chromeBase = filepath.Join(tempHome, ".config/google-chrome")
+		case "windows":
+			chromeBase = filepath.Join(tempHome, "Google/Chrome/User Data")
+		}
+
+		if chromeBase != "" {
+			leveldbPath := filepath.Join(chromeBase, "Profile 5", "Local Storage", "leveldb")
+			if err := os.MkdirAll(leveldbPath, 0755); err != nil {
+				t.Fatalf("MkdirAll() error = %v", err)
+			}
+			db, err := leveldb.OpenFile(leveldbPath, nil)
+			if err != nil {
+				t.Fatalf("leveldb.OpenFile() error = %v", err)
+			}
+			mockConfig := `{"teams":{"T2":{"token":"xoxc-mock-token-5"}}}`
+			val := append([]byte{1}, []byte(mockConfig)...)
+			if err := db.Put([]byte("_https://app.slack.com\x00\x01localConfig_v2"), val, nil); err != nil {
+				t.Fatalf("db.Put() error = %v", err)
+			}
+			db.Close()
+		}
+
+		appCtx := newTestAppContextNoToken(t, output.Human)
+		cmd := &AuthImportCookieCmd{Browser: "chrome", BrowserProfile: "Profile 5"}
+		if err := cmd.Run(appCtx); err != nil {
+			t.Fatalf("AuthImportCookieCmd.Run() error = %v", err)
+		}
+
+		if got := appCtx.Config.Profile("default").Cookie; got != "d=cookie-secret-value-5" {
+			t.Fatalf("saved cookie = %q, want %q", got, "d=cookie-secret-value-5")
+		}
+		if chromeBase != "" {
+			if gotToken := appCtx.Config.Profile("default").Token; gotToken != "xoxc-mock-token-5" {
+				t.Fatalf("saved token = %q, want %q", gotToken, "xoxc-mock-token-5")
+			}
+		}
+	})
+
+	t.Run("cookie not found", func(t *testing.T) {
+		sweetcookieGet = func(ctx context.Context, opts sweetcookie.Options) (sweetcookie.Result, error) {
+			return sweetcookie.Result{
+				Cookies: []sweetcookie.Cookie{
+					{
+						Name:  "other",
+						Value: "other-val",
+					},
+				},
+			}, nil
+		}
+
+		appCtx := newTestAppContextNoToken(t, output.Human)
+		cmd := &AuthImportCookieCmd{Browser: "chrome"}
+		if err := cmd.Run(appCtx); err == nil {
+			t.Fatal("AuthImportCookieCmd.Run() expected error when cookie is not found")
+		}
+	})
+
+	t.Run("extraction error", func(t *testing.T) {
+		sweetcookieGet = func(ctx context.Context, opts sweetcookie.Options) (sweetcookie.Result, error) {
+			return sweetcookie.Result{}, errors.New("extract failed")
+		}
+
+		appCtx := newTestAppContextNoToken(t, output.Human)
+		cmd := &AuthImportCookieCmd{Browser: "chrome"}
+		if err := cmd.Run(appCtx); err == nil {
+			t.Fatal("AuthImportCookieCmd.Run() expected error on sweetcookie.Get failure")
+		}
+	})
+}
+
+func TestGetBrowserUserDataDir(t *testing.T) {
+	browsers := []string{"chrome", "brave", "edge", "chromium"}
+	if runtime.GOOS == "darwin" {
+		browsers = append(browsers, "vivaldi", "opera", "arc")
+	}
+	for _, b := range browsers {
+		dir, err := getBrowserUserDataDir(b)
+		if err != nil {
+			t.Fatalf("getBrowserUserDataDir(%s) unexpected error: %v", b, err)
+		}
+		if dir == "" {
+			t.Fatalf("getBrowserUserDataDir(%s) returned empty path", b)
+		}
+	}
+	if _, err := getBrowserUserDataDir("invalid"); err == nil {
+		t.Fatal("expected error for invalid browser")
+	}
+}
+
+func TestExtractChromeToken(t *testing.T) {
+	t.Run("missing leveldb", func(t *testing.T) {
+		_, err := extractChromeToken(t.TempDir())
+		if err == nil {
+			t.Fatal("expected error when leveldb dir is missing")
+		}
+	})
+
+	t.Run("empty leveldb", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, "Local Storage", "leveldb"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		_, err := extractChromeToken(dir)
+		if err == nil {
+			t.Fatal("expected error when leveldb is empty/missing files")
+		}
+	})
+
+	t.Run("success with token", func(t *testing.T) {
+		dir := t.TempDir()
+		leveldbPath := filepath.Join(dir, "Local Storage", "leveldb")
+		if err := os.MkdirAll(leveldbPath, 0755); err != nil {
+			t.Fatalf("MkdirAll() error = %v", err)
+		}
+
+		db, err := leveldb.OpenFile(leveldbPath, nil)
+		if err != nil {
+			t.Fatalf("leveldb.OpenFile() error = %v", err)
+		}
+
+		mockConfig := `{"teams":{"T1":{"token":"xoxc-mock-token"}}}`
+		val := append([]byte{1}, []byte(mockConfig)...)
+		if err := db.Put([]byte("_https://app.slack.com\x00\x01localConfig_v2"), val, nil); err != nil {
+			t.Fatalf("db.Put() error = %v", err)
+		}
+		db.Close()
+
+		token, err := extractChromeToken(dir)
+		if err != nil {
+			t.Fatalf("extractChromeToken() error = %v", err)
+		}
+		if token != "xoxc-mock-token" {
+			t.Fatalf("extracted token = %q, want %q", token, "xoxc-mock-token")
+		}
+	})
+
+	t.Run("no localConfig_v2 key", func(t *testing.T) {
+		dir := t.TempDir()
+		leveldbPath := filepath.Join(dir, "Local Storage", "leveldb")
+		if err := os.MkdirAll(leveldbPath, 0755); err != nil {
+			t.Fatalf("MkdirAll() error = %v", err)
+		}
+
+		db, err := leveldb.OpenFile(leveldbPath, nil)
+		if err != nil {
+			t.Fatalf("leveldb.OpenFile() error = %v", err)
+		}
+		if err := db.Put([]byte("someOtherKey"), []byte("someValue"), nil); err != nil {
+			t.Fatalf("db.Put() error = %v", err)
+		}
+		db.Close()
+
+		_, err = extractChromeToken(dir)
+		if err == nil || !strings.Contains(err.Error(), "localConfig_v2 not found") {
+			t.Fatalf("expected 'localConfig_v2 not found' error, got: %v", err)
+		}
+	})
+
+	t.Run("localConfig_v2 malformed json start", func(t *testing.T) {
+		dir := t.TempDir()
+		leveldbPath := filepath.Join(dir, "Local Storage", "leveldb")
+		if err := os.MkdirAll(leveldbPath, 0755); err != nil {
+			t.Fatalf("MkdirAll() error = %v", err)
+		}
+
+		db, err := leveldb.OpenFile(leveldbPath, nil)
+		if err != nil {
+			t.Fatalf("leveldb.OpenFile() error = %v", err)
+		}
+		if err := db.Put([]byte("_https://app.slack.com\x00\x01localConfig_v2"), []byte{1, 2, 3}, nil); err != nil {
+			t.Fatalf("db.Put() error = %v", err)
+		}
+		db.Close()
+
+		_, err = extractChromeToken(dir)
+		if err == nil || !strings.Contains(err.Error(), "localConfig_v2 not found") {
+			t.Fatalf("expected error, got: %v", err)
+		}
+	})
+
+	t.Run("localConfig_v2 invalid json format", func(t *testing.T) {
+		dir := t.TempDir()
+		leveldbPath := filepath.Join(dir, "Local Storage", "leveldb")
+		if err := os.MkdirAll(leveldbPath, 0755); err != nil {
+			t.Fatalf("MkdirAll() error = %v", err)
+		}
+
+		db, err := leveldb.OpenFile(leveldbPath, nil)
+		if err != nil {
+			t.Fatalf("leveldb.OpenFile() error = %v", err)
+		}
+		val := append([]byte{1}, []byte("{invalid json")...)
+		if err := db.Put([]byte("_https://app.slack.com\x00\x01localConfig_v2"), val, nil); err != nil {
+			t.Fatalf("db.Put() error = %v", err)
+		}
+		db.Close()
+
+		_, err = extractChromeToken(dir)
+		if err == nil || !strings.Contains(err.Error(), "parse localConfig_v2 JSON") {
+			t.Fatalf("expected parse error, got: %v", err)
+		}
+	})
+
+	t.Run("localConfig_v2 empty teams", func(t *testing.T) {
+		dir := t.TempDir()
+		leveldbPath := filepath.Join(dir, "Local Storage", "leveldb")
+		if err := os.MkdirAll(leveldbPath, 0755); err != nil {
+			t.Fatalf("MkdirAll() error = %v", err)
+		}
+
+		db, err := leveldb.OpenFile(leveldbPath, nil)
+		if err != nil {
+			t.Fatalf("leveldb.OpenFile() error = %v", err)
+		}
+		val := append([]byte{1}, []byte(`{"teams":{}}`)...)
+		if err := db.Put([]byte("_https://app.slack.com\x00\x01localConfig_v2"), val, nil); err != nil {
+			t.Fatalf("db.Put() error = %v", err)
+		}
+		db.Close()
+
+		_, err = extractChromeToken(dir)
+		if err == nil || !strings.Contains(err.Error(), "no team tokens found") {
+			t.Fatalf("expected 'no team tokens found' error, got: %v", err)
+		}
+	})
 }

@@ -68,6 +68,18 @@ func TestCookieAndBaseURLFromEnv(t *testing.T) {
 	}
 }
 
+func TestCookiePreferenceEnvThenConfig(t *testing.T) {
+	t.Setenv("SLACK_CLI_COOKIE", "")
+	t.Setenv("SLACK_COOKIE", "")
+
+	ctx := newTestContext(t)
+	ctx.Config.SetCookie("default", "config-cookie")
+
+	if cookie, source := ctx.Cookie(); cookie != "config-cookie" || source != "config" {
+		t.Fatalf("Cookie() config preference = (%q, %q)", cookie, source)
+	}
+}
+
 func TestTokenCookieAndBaseURLPrecedence(t *testing.T) {
 	t.Setenv("SLACK_CLI_TOKEN", "")
 	t.Setenv("SLACK_TOKEN", "env-fallback")

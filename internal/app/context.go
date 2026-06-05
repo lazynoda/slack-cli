@@ -83,6 +83,11 @@ func (c *Context) Cookie() (string, string) {
 		return cookie, "SLACK_COOKIE"
 	}
 
+	profile := c.Config.Profile(c.Settings.Profile)
+	if cookie := strings.TrimSpace(profile.Cookie); cookie != "" {
+		return cookie, "config"
+	}
+
 	return "", ""
 }
 

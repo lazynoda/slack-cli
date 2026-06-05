@@ -16,7 +16,8 @@ type File struct {
 }
 
 type Profile struct {
-	Token string `json:"token,omitempty"`
+	Token  string `json:"token,omitempty"`
+	Cookie string `json:"cookie,omitempty"`
 }
 
 func ResolvePath(override string) (string, error) {
@@ -95,6 +96,30 @@ func (f *File) ClearToken(name string) {
 
 	profile := f.Profiles[name]
 	profile.Token = ""
+	if profile == (Profile{}) {
+		delete(f.Profiles, name)
+		return
+	}
+	f.Profiles[name] = profile
+}
+
+func (f *File) SetCookie(name, cookie string) {
+	if f.Profiles == nil {
+		f.Profiles = map[string]Profile{}
+	}
+
+	profile := f.Profiles[name]
+	profile.Cookie = strings.TrimSpace(cookie)
+	f.Profiles[name] = profile
+}
+
+func (f *File) ClearCookie(name string) {
+	if f == nil || f.Profiles == nil {
+		return
+	}
+
+	profile := f.Profiles[name]
+	profile.Cookie = ""
 	if profile == (Profile{}) {
 		delete(f.Profiles, name)
 		return
