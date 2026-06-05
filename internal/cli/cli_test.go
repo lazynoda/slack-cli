@@ -855,7 +855,7 @@ func TestExtractChromeToken(t *testing.T) {
 		if err := db.Put([]byte("_https://app.slack.com\x00\x01localConfig_v2"), val, nil); err != nil {
 			t.Fatalf("db.Put() error = %v", err)
 		}
-		db.Close()
+		_ = db.Close()
 
 		token, err := extractChromeToken(dir)
 		if err != nil {
@@ -880,7 +880,7 @@ func TestExtractChromeToken(t *testing.T) {
 		if err := db.Put([]byte("someOtherKey"), []byte("someValue"), nil); err != nil {
 			t.Fatalf("db.Put() error = %v", err)
 		}
-		db.Close()
+		_ = db.Close()
 
 		_, err = extractChromeToken(dir)
 		if err == nil || !strings.Contains(err.Error(), "localConfig_v2 not found") {
@@ -902,7 +902,7 @@ func TestExtractChromeToken(t *testing.T) {
 		if err := db.Put([]byte("_https://app.slack.com\x00\x01localConfig_v2"), []byte{1, 2, 3}, nil); err != nil {
 			t.Fatalf("db.Put() error = %v", err)
 		}
-		db.Close()
+		_ = db.Close()
 
 		_, err = extractChromeToken(dir)
 		if err == nil || !strings.Contains(err.Error(), "localConfig_v2 not found") {
@@ -925,7 +925,7 @@ func TestExtractChromeToken(t *testing.T) {
 		if err := db.Put([]byte("_https://app.slack.com\x00\x01localConfig_v2"), val, nil); err != nil {
 			t.Fatalf("db.Put() error = %v", err)
 		}
-		db.Close()
+		_ = db.Close()
 
 		_, err = extractChromeToken(dir)
 		if err == nil || !strings.Contains(err.Error(), "parse localConfig_v2 JSON") {
@@ -948,7 +948,7 @@ func TestExtractChromeToken(t *testing.T) {
 		if err := db.Put([]byte("_https://app.slack.com\x00\x01localConfig_v2"), val, nil); err != nil {
 			t.Fatalf("db.Put() error = %v", err)
 		}
-		db.Close()
+		_ = db.Close()
 
 		_, err = extractChromeToken(dir)
 		if err == nil || !strings.Contains(err.Error(), "no team tokens found") {
