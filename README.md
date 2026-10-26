@@ -1,5 +1,11 @@
 # slack-cli
 
+[![CI](https://github.com/lazynoda/slack-cli/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/lazynoda/slack-cli/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/lazynoda/slack-cli)](LICENSE)
+[![Go](https://img.shields.io/github/go-mod/go-version/lazynoda/slack-cli)](go.mod)
+[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A590%25-brightgreen)](scripts/check-coverage.sh)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-lazynoda-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/lazynoda)
+
 A lightweight, profile-based command-line interface for the Slack Web API, written in Go. Built for developers, devops workflows, and terminal power users.
 
 `slack-cli` makes it easy to read conversations, manage threads, send messages, search workspaces, and perform Slack Web API operations directly from your terminal. It supports standard API tokens (`xoxb-`/`xoxp-`) as well as cookie-backed client sessions (`xoxc-` client tokens + `d` session cookies).
